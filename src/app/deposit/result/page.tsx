@@ -1,76 +1,75 @@
 "use client";
 
-import { useState } from "react";
-import Shell from "@/components/Shell";
-import { getSecretKey } from "@/lib/auth";
+import { useEffect, useState, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
+import Link from "next/link";
 
-export default function DepositPage() {
-  const [amount, setAmount] = useState("");
-  const [email, setEmail] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const key = typeof window !== "undefined" ? getSecretKey() : null;
+function Content() {
+  const sp = useSearchParams();
+  const router = useRouter();
+  const [status, setStatus] = useState<"loading" | "success" | "failed">("loading");
+  const [msg, setMsg] = useState("");
 
-  const handleDeposit = async () => {
-    const v = parseFloat(amount);
-    if (!v || v <= 0 || !email || !key) return;
-    setLoading(true);
-    setError("");
-    try {
-      const res = await fetch("/api/deposit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount: v, email, secretKey: key }),
-      });
-      const data = await res.json();
-      if (data.success && data.checkoutUrl) {
-        window.location.href = data.checkoutUrl;
-      } else {
-        setError(data.error || "Failed");
+  useEffect(() => {
+    const s = sp.get("status");
+    const txRef = sp.get("tx_ref");
+    const key = sp.get("key");
+
+    if (s === "successful" || s === "success") {
+      setStatus("success");
+      setMsg("Payment confirmed. Your wallet has been credited.");
+      if (txRef && key) {
+        fetch(`/api/verify?tx_ref=${txRef}`).then(() => {
+          if (key) window.location.href = "/dashboard";
+        });
       }
-    } catch {
-      setError("Something went wrong");
-    } finally {
-      setLoading(false);
+    } else if (s === "failed") {
+      setStatus("failed");
+      setMsg("Payment was not completed.");
+    } else if (txRef) {
+      fetch(`/api/verify?tx_ref=${txRef}`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.verified) { setStatus("success"); setMsg("Payment confirmed."); }
+          else { setStatus("failed"); setMsg("Could not verify payment."); }
+          setTimeout(() => router.replace("/dashboard"), 2000);
+        })
+        .catch(() => { setStatus("failed"); setMsg("Verification failed."); });
+    } else {
+      setStatus("failed");
+      setMsg("No transaction reference.");
     }
-  };
+  }, [sp, router]);
 
   return (
-    <Shell>
-      <div className="max-w-lg mx-auto px-4 sm:px-6 py-8 animate-fade-up">
-        <h1 className="text-3xl font-extrabold text-gray-900 mb-2">Deposit Funds</h1>
-        <p className="text-gray-500 mb-8">Add funds via PayChangu — Mobile Money, Card, or Bank Transfer.</p>
-
-        <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-          <div className="mb-5">
-            <label className="block text-sm font-semibold text-gray-700 mb-1.5">Amount (MWK)</label>
-            <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Enter amount" min="100"
-              className="w-full border border-gray-300 rounded-xl px-4 py-3 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-            <div className="flex flex-wrap gap-2 mt-3">
-              {[1000, 5000, 10000, 25000, 50000].map((a) => (
-                <button key={a} onClick={() => setAmount(a.toString())}
-                  className={`px-3 py-1.5 text-sm rounded-lg border font-medium transition-colors ${amount === a.toString() ? "bg-indigo-50 border-indigo-300 text-indigo-700" : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100"}`}>
-                  {a.toLocaleString()}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="mb-6">
-            <label className="block text-sm font-semibold text-gray-700 mb-1.5">Email (for receipt)</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com"
-              className="w-full border border-gray-300 rounded-xl px-4 py-3 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-          </div>
-
-          {error && <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 mb-4 text-sm text-red-700">{error}</div>}
-
-          <button onClick={handleDeposit} disabled={loading || !amount || !email}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-semibold py-3.5 rounded-xl transition-colors flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20">
-            {loading ? <><div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> Redirecting...</>
-              : "Deposit via PayChangu"}
-          </button>
-        </div>
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="bg-white border border-gray-200 rounded-3xl p-8 max-w-md w-full text-center shadow-lg">
+        {status === "loading" && (
+          <><div className="w-16 h-16 border-4 border-indigo-400 border-t-transparent rounded-full animate-spin mx-auto mb-6" />
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">Verifying...</h1></>
+        )}
+        {status === "success" && (
+          <><div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <svg className="w-10 h-10 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+          </div><h1 className="text-2xl font-bold text-gray-900 mb-2">Deposit Successful!</h1><p className="text-gray-500">{msg}</p></>
+        )}
+        {status === "failed" && (
+          <><div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+            <svg className="w-10 h-10 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+          </div><h1 className="text-2xl font-bold text-gray-900 mb-2">Deposit Failed</h1><p className="text-gray-500 mb-6">{msg}</p></>
+        )}
+        <Link href="/dashboard" className="inline-block bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-8 py-3 rounded-xl transition-colors mt-4">
+          Back to Wallet
+        </Link>
       </div>
-    </Shell>
+    </div>
+  );
+}
+
+export default function DepositResultPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="w-12 h-12 border-4 border-indigo-400 border-t-transparent rounded-full animate-spin" /></div>}>
+      <Content />
+    </Suspense>
   );
 }
